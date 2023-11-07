@@ -130,10 +130,13 @@ def run_basic_convergence():
             enable_checkpointing=False,
             base_output_directory = "gs://maxtext-experiments-multipod",
             dataset_path = "gs://max-datasets-rogue",
-            int8_training=True   
+            int8_training=True,
+            int8_ttf=True   
         )
 
-    run_job("mattdavidow-aqt-package", base_basic_convergence(), 1)
+    run_job("mattdavidow-aqt-package-ttf", base_basic_convergence(), 1)
+    run_job("mattdavidow-aqt-package-bf16", base_basic_convergence(), 1, int8_training=False)
+    run_job("mattdavidow-aqt-package-ttt", base_basic_convergence(), 1, int8_ttf=False)
 
 def main():
     print("hello")
