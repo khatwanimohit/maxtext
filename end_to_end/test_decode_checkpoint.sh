@@ -58,7 +58,7 @@ echo
 $cmd python3 MaxText/train.py MaxText/configs/base.yml \
 run_name=${training_ckpt_run_id} \
 base_output_directory=${base_output_directory} \
-dataset_path=${dataset_path} \
+dataset_path=${dataset_path} attention=mha \
 steps=5 save_period=3 async_checkpointing=false \
 ${model_params} \
 
@@ -78,7 +78,7 @@ echo
 echo "Generate a decode checkpoint from the test training checkpoint"
 echo
 $cmd python3 MaxText/generate_decode_checkpoint.py MaxText/configs/base.yml \
-run_name=${decode_ckpt_run_id} \
+run_name=${decode_ckpt_run_id} attention=mha \
 base_output_directory=${base_output_directory} \
 dataset_path=${dataset_path} async_checkpointing=false \
 load_parameters_path=${base_output_directory}/${training_ckpt_run_id}/checkpoints/3/default \
