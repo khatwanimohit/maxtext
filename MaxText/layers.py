@@ -274,6 +274,7 @@ def _convert_to_activation_function(
                          to an activation function""")
 
 
+#TODO: Confirm this matches with Llama MHA
 class MultiHeadDotProductAttention(nn.Module):
   """Multi-head dot-product attention.
 
@@ -567,7 +568,6 @@ class MultiHeadDotProductAttention(nn.Module):
 
 
 
-
 class MlpBlock(nn.Module):
   """Transformer MLP / feed-forward block.
 
@@ -592,6 +592,7 @@ class MlpBlock(nn.Module):
     """Applies Transformer MlpBlock module."""
     cfg = self.config
 
+    #Considering no pretraining_tp
     # Iterate over specified MLP input activation functions.
     # e.g. ('relu',) or ('gelu', 'linear') for gated-gelu.
     activations = []
@@ -610,11 +611,22 @@ class MlpBlock(nn.Module):
 
     # Take elementwise product of above intermediate activations.
     x = functools.reduce(operator.mul, activations)
+
+    up_proj_x = DenseGeneral(
+          self.intermediate_dim,
+          dtype=self.dtype,
+          kernel_init=self.kernel_init,
+          kernel_axes=('embed', 'mlp'),
+          name="ffn_layer1",
+          config=cfg)(
+              inputs)
+    x = jnp.multiply(x, up_proj_x)
+
     # No Dropout in Llama
     # x = nn.Dropout(
     #     rate=self.intermediate_dropout_rate, broadcast_dims=(-2,))(
     #         x, deterministic=deterministic)  # Broadcast along length.
-    x = nn.with_logical_constraint(x, ('activation_batch', 'activation_length', 'activation_mlp'))
+    # x = nn.with_logical_constraint(x, ('activation_batch', 'activation_length', 'activation_mlp'))
     output = DenseGeneral(
         inputs.shape[-1],
         dtype=self.dtype,
