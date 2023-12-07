@@ -317,7 +317,7 @@ class Decoder(nn.Module):
   @nn.compact
   def __call__(self,
                decoder_input_tokens,
-               decoder_segment_ids=None,
+               decoder_segment_ids,
                decoder_positions=None,
                decoder_mask=None,
                deterministic=False,
@@ -456,7 +456,7 @@ class Transformer(nn.Module):
       self,
       decoder_input_tokens,
       decoder_target_tokens,
-      decoder_segment_ids=None,
+      decoder_segment_ids,
       decoder_positions=None,
       enable_dropout=True,
       decode=False,

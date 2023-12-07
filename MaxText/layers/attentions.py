@@ -16,7 +16,7 @@
 
 import functools
 import math
-from typing import Optional
+from typing import Optional, NamedTuple
 
 from flax import linen as nn
 import jax
@@ -34,6 +34,9 @@ from layers import linears
 from layers import normalizations
 from layers import quantizations
 
+from kernels import splash_try as splash
+from kernels import splash_attention_mask as mask_lib
+
 Array = common_types.Array
 Config = common_types.Config
 DType = common_types.DType
@@ -48,9 +51,19 @@ RMSNorm = normalizations.RMSNorm
 nd_dense_init = initializers.nd_dense_init
 shard_map = shard_map.shard_map
 
+NamedSharding = jax.sharding.NamedSharding
+PartitionSpec = jax.sharding.PartitionSpec
+
 dynamic_vector_slice_in_dim = jax.vmap(
     lax.dynamic_slice_in_dim, in_axes=(None, 0, None, None))
 
+class AttentionDataSharding(NamedTuple):
+  q: PartitionSpec
+  k: PartitionSpec
+  v: PartitionSpec
+  segment_ids: splash.SegmentIds | None
+  doutput: PartitionSpec
+  dynamic_causal_mask_bounds: mask_lib.DynamicCausalMaskBounds | None
 
 def combine_biases(*masks: Optional[Array]):
   """Combine attention biases.
@@ -310,6 +323,153 @@ class MultiHeadDotProductAttention(nn.Module):
           num_stages = 1, causal = True, segment_ids = None
         )
       x = wrap_gpu_flash_attention(query, key, value)
+    elif attention_type == 'splash':
+      # reshaped to ('batch', 'heads', 'length', 'kv')
+      query = jax.numpy.transpose(query, axes=(0, 2, 1, 3))
+      key = jax.numpy.transpose(key, axes=(0, 2, 1, 3))
+      value = jax.numpy.transpose(value, axes=(0, 2, 1, 3))
+      decoder_segment_ids = splash.SegmentIds(
+        decoder_segment_ids, decoder_segment_ids
+      )
+      # make same mask for all the heads
+      def _make_same_mask_for_all_heads(
+          q_seq_len: int, kv_seq_len: int, num_heads: int
+      ):
+        return (mask_lib.CausalMask((q_seq_len, kv_seq_len)),) * num_heads
+      masks = _make_same_mask_for_all_heads(query.shape[2], key.shape[2], query.shape[1])
+      mask = mask_lib.MultiHeadMask(masks)
+      splash_function = splash.make_splash_mha
+      block_size = 128
+      block_sizes= splash.BlockSizes(
+          block_q=block_size,
+          block_kv=block_size,
+          block_q_dkv=block_size,
+          block_kv_dkv=block_size,
+          block_kv_dkv_compute=block_size,
+          block_q_dq=block_size,
+          block_kv_dq=block_size,
+      )
+      # special scenario
+      _, num_q_head_shards, q_seq_shards = 4, 1, 1
+      kernel = splash_function(
+          mask,
+          block_sizes=block_sizes,
+          head_shards=num_q_head_shards,
+          q_seq_shards=q_seq_shards,
+      )
+      q_axis_names = nn.logical_to_mesh_axes((
+          'activation_batch',
+          'activation_heads',
+          'activation_length',
+          'activation_kv',
+      ))
+      kv_axis_names = PartitionSpec(('data', 'fsdp'), None, None, None)
+      segment_ids_spec = splash.SegmentIds(  # pytype: disable=wrong-arg-types
+          PartitionSpec(('data', 'fsdp'), None),
+          PartitionSpec(('data', 'fsdp'), None),
+      )
+      specs = AttentionDataSharding(
+        q_axis_names,
+        kv_axis_names,
+        kv_axis_names,
+        segment_ids_spec,
+        q_axis_names,
+        None,
+      )
+      is_mqa, shard_kv_heads = False, False
+
+      # shmap function
+
+      def _strip_batch(specs: AttentionDataSharding) -> AttentionDataSharding:
+        return AttentionDataSharding(
+          PartitionSpec(*specs.q[1:]),
+          PartitionSpec(*specs.k[1:]),
+          PartitionSpec(*specs.v[1:]),
+          splash.SegmentIds(  # pytype: disable=wrong-arg-types
+              PartitionSpec(*specs.segment_ids.q[1:]),
+              PartitionSpec(*specs.segment_ids.kv[1:]),
+          ),
+          PartitionSpec(*specs.doutput[1:]),
+          specs.dynamic_causal_mask_bounds,
+        )
+      def _make_shmap_kernel(
+        kernel,
+        mesh: jax.sharding.Mesh,
+        specs: AttentionDataSharding,
+        *,
+        num_q_heads: int,
+        num_kv_heads: int,
+        num_q_head_shards: int,
+        is_mqa: bool,
+        shard_kv_heads: bool,
+      ):
+        specs = _strip_batch(specs)
+        (q_spec, k_spec, v_spec, segment_ids_spec, _, mask_bounds_spec) = specs
+        def shmap_wrapper(q, k, v, segment_ids, dynamic_causal_mask_bounds):
+          # jax.lax.axis_index requires this function to be annotated with jax.jit.
+          @jax.jit
+          def app(f, q, k, v, segment_ids, dynamic_causal_mask_bounds):
+            # Consider the case when sharding Q along the model axis (heads) but KV
+            # are replicated. Then, for each shard, we have to select the right heads
+            # in KV for the Q heads in the shard.
+            # For example, 4 Q heads, 2 KV heads:
+            # Shard:   0   | 1
+            # Q heads: 0 1 | 2 3
+            # KV heads 0 1 | 0 1
+            # For shard 0 the two Q heads must only 'see' KV head 0.
+            # For shard 1 the two Q heads must only 'see' KV head 1.
+            # This is achieved with a dynamic slice on KV.
+            if not is_mqa and not shard_kv_heads and num_q_head_shards > 1:
+              assert q.shape[0] >= 1
+              assert k.shape == v.shape
+
+              q_heads_per_shard = q.shape[0]
+              num_q_heads_per_kv = num_q_heads // num_kv_heads
+              hi = jax.lax.axis_index(axis_name="heads")
+
+              slice_size = max(1, q_heads_per_shard // num_q_heads_per_kv)
+              start_indices = ((hi * q_heads_per_shard) // num_q_heads_per_kv, 0, 0)
+              slice_sizes = (slice_size, k.shape[1], k.shape[2])
+
+              k = jax.lax.dynamic_slice(k, start_indices, slice_sizes)
+              v = jax.lax.dynamic_slice(v, start_indices, slice_sizes)
+
+            return f(q, k, v, segment_ids, dynamic_causal_mask_bounds)
+
+          kernel_spec = kernel.manual_sharding_spec(
+              NamedSharding(mesh, PartitionSpec("tensor","sequence"))
+          )
+          return shard_map(
+            app,
+            mesh,
+            (
+                kernel_spec,
+                q_spec,
+                k_spec,
+                v_spec,
+                segment_ids_spec,
+                mask_bounds_spec,
+            ),
+            q_spec,
+            check_rep=False,
+          )(kernel, q, k, v, segment_ids, dynamic_causal_mask_bounds)
+
+        return shmap_wrapper
+      num_q_heads = query.shape[1]
+      num_kv_heads = key.shape[1]
+      f = _make_shmap_kernel(
+        kernel,
+        self.mesh,
+        specs,
+        num_q_heads=num_q_heads,
+        num_kv_heads=num_kv_heads,
+        num_q_head_shards=num_q_head_shards,
+        is_mqa=is_mqa,
+        shard_kv_heads=shard_kv_heads,
+      )
+      f = jax.vmap(f)
+      x = f(query, key, value, decoder_segment_ids, None)
+      x = jax.numpy.transpose(x, axes=(0, 2, 1, 3))
     else:
       aqt_rng = self.make_rng('aqt')
       x = dot_product_attention(
@@ -331,7 +491,7 @@ class MultiHeadDotProductAttention(nn.Module):
                inputs_q: Array,
                inputs_kv: Array,
                attention_type: str,
-               decoder_segment_ids: Optional[Array] = None,
+               decoder_segment_ids,
                inputs_positions: Optional[Array] = None,
                mask: Optional[Array] = None,
                bias: Optional[Array] = None,
