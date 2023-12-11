@@ -274,7 +274,6 @@ def _convert_to_activation_function(
                          to an activation function""")
 
 
-#TODO: Confirm this matches with Llama MHA
 class MultiHeadDotProductAttention(nn.Module):
   """Multi-head dot-product attention.
 
@@ -592,7 +591,6 @@ class MlpBlock(nn.Module):
     """Applies Transformer MlpBlock module."""
     cfg = self.config
 
-    #Considering no pretraining_tp
     # Iterate over specified MLP input activation functions.
     # e.g. ('relu',) or ('gelu', 'linear') for gated-gelu.
     activations = []
