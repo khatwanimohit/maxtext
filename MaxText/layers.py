@@ -610,6 +610,12 @@ class MlpBlock(nn.Module):
     # Take elementwise product of above intermediate activations.
     x = functools.reduce(operator.mul, activations)
 
+    # Apply dropout and final dense output projection.
+    x = nn.Dropout(
+        rate=self.intermediate_dropout_rate, broadcast_dims=(-2,))(
+            x, deterministic=deterministic)  # Broadcast along length.
+    x = nn.with_logical_constraint(x, ('activation_batch', 'activation_length', 'activation_mlp'))
+
     up_proj_x = DenseGeneral(
           self.intermediate_dim,
           dtype=self.dtype,
@@ -620,11 +626,10 @@ class MlpBlock(nn.Module):
               inputs)
     x = jnp.multiply(x, up_proj_x)
 
-    # No Dropout in Llama
-    # x = nn.Dropout(
-    #     rate=self.intermediate_dropout_rate, broadcast_dims=(-2,))(
-    #         x, deterministic=deterministic)  # Broadcast along length.
-    # x = nn.with_logical_constraint(x, ('activation_batch', 'activation_length', 'activation_mlp'))
+    x = nn.Dropout(
+        rate=self.intermediate_dropout_rate, broadcast_dims=(-2,))(
+            x, deterministic=deterministic)  # Broadcast along length.
+    x = nn.with_logical_constraint(x, ('activation_batch', 'activation_length', 'activation_mlp'))
     output = DenseGeneral(
         inputs.shape[-1],
         dtype=self.dtype,
@@ -1097,13 +1102,11 @@ class DecoderLayer(nn.Module):
     mlp_lnx = nn.with_logical_constraint(mlp_lnx, ('activation_batch', 'activation_length', 'activation_embed'))
 
     layer_output = mlp_lnx + residual
-    
-    #No Dropout in Llama
-    # next_layer_addition_dropped_out = nn.Dropout(
-    #     rate=cfg.dropout_rate, broadcast_dims=(-2,))(
-    #         next_layer_addition, deterministic=deterministic)
 
-    # layer_output = next_layer_addition_dropped_out + inputs
+    layer_output = nn.Dropout(
+        rate=cfg.dropout_rate, broadcast_dims=(-2,))(
+            layer_output, deterministic=deterministic)
+
     layer_output = nn.with_logical_constraint(layer_output, ('activation_batch', 'activation_length', 'activation_embed'))
 
     if cfg.record_internal_nn_metrics:
@@ -1139,10 +1142,9 @@ class Decoder(nn.Module):
 
     # [batch, length] -> [batch, length, emb_dim]
     y = self.shared_embedding(decoder_input_tokens.astype('int32'))
-    #No Dropout in Llama
-    # y = nn.Dropout(
-    #     rate=cfg.dropout_rate, broadcast_dims=(-2,))(
-    #         y, deterministic=deterministic)
+    y = nn.Dropout(
+        rate=cfg.dropout_rate, broadcast_dims=(-2,))(
+            y, deterministic=deterministic)
     y = y.astype(cfg.dtype)
 
     BlockLayer = DecoderLayer
@@ -1200,10 +1202,9 @@ class Decoder(nn.Module):
                 max_decode_length)
 
     y = LayerNorm(dtype=cfg.dtype, name='decoder_norm', kernel_axes = ('embed',))(y)
-    #No Dropout in Llama
-    # y = nn.Dropout(
-    #     rate=cfg.dropout_rate, broadcast_dims=(-2,))(
-    #         y, deterministic=deterministic)
+    y = nn.Dropout(
+        rate=cfg.dropout_rate, broadcast_dims=(-2,))(
+            y, deterministic=deterministic)
 
     # [batch, length, emb_dim] -> [batch, length, vocab_size]
     if cfg.logits_via_embedding:
