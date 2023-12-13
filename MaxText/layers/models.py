@@ -202,9 +202,10 @@ def make_decoder_mask(decoder_target_tokens: Array,
 
   # Packing mask
   if decoder_segment_ids is not None:
+    # valid positional indexes start from 1 and 0 represents paddings
     masks.append(
         make_attention_mask(
-            decoder_segment_ids, decoder_segment_ids, jnp.equal, dtype=dtype))
+            decoder_segment_ids != 0, decoder_segment_ids != 0, jnp.equal, dtype=dtype))
 
   return attentions.combine_masks(*masks, dtype=dtype)
 
