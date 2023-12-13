@@ -32,6 +32,7 @@ DType = common_types.DType
 NdInitializer = initializers.NdInitializer
 
 nd_dense_init = initializers.nd_dense_init
+RMSNorm = normalizations.RMSNorm
 
 
 def _convert_to_activation_function(
@@ -158,11 +159,19 @@ class MlpBlock(nn.Module):
   kernel_init: NdInitializer = nd_dense_init(1.0, 'fan_in', 'truncated_normal')
   intermediate_dropout_rate: float = 0.1
   dtype: Any = jnp.float32
+  use_pre_norm: bool = False
 
   @nn.compact
   def __call__(self, inputs, decode: bool = False, deterministic: bool = False):
     """Applies Transformer MlpBlock module."""
     cfg = self.config
+
+    if self.use_pre_norm:
+      inputs = RMSNorm(
+        name='mlp_layer_norm',
+        dtype=cfg.dtype,
+        kernel_axes=('embed',),
+        )(inputs)
 
     # Iterate over specified MLP input activation functions.
     # e.g. ('relu',) or ('gelu', 'linear') for gated-gelu.
