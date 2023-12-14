@@ -167,7 +167,7 @@ class MlpBlock(nn.Module):
   def __call__(self, inputs, packing_mask: Optional[Array] = None, decode: bool = False, deterministic: bool = False):
     """Applies Transformer MlpBlock module."""
     cfg = self.config
-
+    residual = inputs
     if self.use_pre_norm:
       inputs = RMSNorm(
         name='mlp_layer_norm',
@@ -224,4 +224,8 @@ class MlpBlock(nn.Module):
 
     if self.apply_packing_mask:
       output *= packing_mask
+
+    if self.add_skip_connection:
+      outputs += residual
+
     return output

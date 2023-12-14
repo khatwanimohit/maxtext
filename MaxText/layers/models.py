@@ -282,6 +282,7 @@ class DecoderLayer(nn.Module):
         name='mlp',
         use_pre_norm=cfg.use_pre_norm_mlp,
         apply_packing_mask=cfg.apply_packing_mask_mlp,
+        add_skip_connection=cfg.add_skip_connection_mlp,
         config=cfg,
     )(lnx, packing_mask=decoder_segment_ids > 0, deterministic=deterministic)
     mlp_lnx = nn.with_logical_constraint(
