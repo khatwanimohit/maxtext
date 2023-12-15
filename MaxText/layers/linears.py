@@ -24,6 +24,7 @@ import jax.numpy as jnp
 import common_types
 from layers import initializers
 from layers import quantizations
+from layers import normalizations
 import numpy as np
 
 Array = common_types.Array
@@ -201,7 +202,7 @@ class MlpBlock(nn.Module):
     if  packing_mask is not None:
       # from [B, L] to [B, L, D]
       packing_mask = jnp.expand_dims(packing_mask, axis=-1)
-    
+
     if self.apply_packing_mask:
       x *= packing_mask
 
@@ -226,6 +227,6 @@ class MlpBlock(nn.Module):
       output *= packing_mask
 
     if self.add_skip_connection:
-      outputs += residual
+      output += residual
 
     return output

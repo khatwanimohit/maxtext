@@ -238,8 +238,8 @@ class DecoderLayer(nn.Module):
 
     # inputs: embedded inputs to the decoder with shape [batch, length, emb_dim]
     lnx = RMSNorm(
-        dtype=cfg.dtype, 
-        name='pre_self_attention_norm', 
+        dtype=cfg.dtype,
+        name='pre_self_attention_norm',
         kernel_axes=('embed',),
         use_bias=cfg.use_bias_layer_norm,
         use_mean_center=cfg.use_mean_center_layer_norm,
@@ -274,6 +274,10 @@ class DecoderLayer(nn.Module):
         ('activation_batch', 'activation_length', 'activation_embed'))
 
     # MLP block.
+    if decoder_segment_ids is None:
+      packing_mask = None
+    else:
+      packing_mask = decoder_segment_ids > 0
     mlp_lnx = linears.MlpBlock(
         intermediate_dim=cfg.mlp_dim,
         activations=cfg.mlp_activations,
@@ -284,7 +288,7 @@ class DecoderLayer(nn.Module):
         apply_packing_mask=cfg.apply_packing_mask_mlp,
         add_skip_connection=cfg.add_skip_connection_mlp,
         config=cfg,
-    )(lnx, packing_mask=decoder_segment_ids > 0, deterministic=deterministic)
+    )(lnx, packing_mask=packing_mask, deterministic=deterministic)
     mlp_lnx = nn.with_logical_constraint(
         mlp_lnx, ('activation_batch', 'activation_length', 'activation_embed')
     )
@@ -420,9 +424,9 @@ class Decoder(nn.Module):
         )
 
     y = RMSNorm(
-        dtype=cfg.dtype, 
-        name='decoder_norm', 
-        kernel_axes=('embed',)
+        dtype=cfg.dtype,
+        name='decoder_norm',
+        kernel_axes=('embed',),
         use_bias=cfg.use_bias_layer_norm,
         use_mean_center=cfg.use_mean_center_layer_norm,
         reductions_in_fp32=cfg.reductions_in_fp32_layer_norm,

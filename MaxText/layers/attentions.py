@@ -428,16 +428,16 @@ class MultiHeadDotProductAttention(nn.Module):
       query = RMSNorm(
           dtype=self.dtype,
           name='query_norm',
-          kernel_axes=('heads',)
+          kernel_axes=('heads',),
           use_bias=cfg.use_bias_layer_norm,
           use_mean_center=cfg.use_mean_center_layer_norm,
           reductions_in_fp32=cfg.reductions_in_fp32_layer_norm,
-          epislon=cfg.epsilon_layer_norm,
+          epsilon=cfg.epsilon_layer_norm,
           )(query)
       key = RMSNorm(
           dtype=self.dtype,
           name='key_norm',
-          kernel_axes=('heads',)
+          kernel_axes=('heads',),
           use_bias=cfg.use_bias_layer_norm,
           use_mean_center=cfg.use_mean_center_layer_norm,
           reductions_in_fp32=cfg.reductions_in_fp32_layer_norm,
@@ -446,7 +446,7 @@ class MultiHeadDotProductAttention(nn.Module):
       value = RMSNorm(
           dtype=self.dtype,
           name='value_norm',
-          kernel_axes=('heads',)
+          kernel_axes=('heads',),
           use_bias=cfg.use_bias_layer_norm,
           use_mean_center=cfg.use_mean_center_layer_norm,
           reductions_in_fp32=cfg.reductions_in_fp32_layer_norm,
