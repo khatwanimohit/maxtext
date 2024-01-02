@@ -39,6 +39,8 @@ import portpicker
 import socket
 from typing import Tuple
 
+from g_mini import modules
+
 from google.cloud import storage
 
 def l2norm_pytree(x):
@@ -257,6 +259,19 @@ def init_initial_state(model, tx, config, is_training, key):
       config.global_batch_size_to_load,
       config.max_target_length
   )
+  cache_size = 2
+  num_heads = 2
+  head_dim = 4
+  num_layers = 3
+  attention_mask = jnp.ones((1, 1, cache_size))
+  cache = {
+      f'layer_{i}': modules.init_layer_cache(cache_size, num_heads, head_dim)
+      for i in range(num_layers)
+  }
+  params = model.init(
+        jax.random.PRNGKey(0), jnp.ones(1, dtype = jnp.int32), jnp.ones(1, dtype = jnp.int32), cache, attention_mask, 0
+  )
+  import pdb;pdb.set_trace()
   model_vars = model.init({'params': key, 'dropout': key, 'aqt': key},
                           jnp.ones(input_shape),
                           jnp.ones(input_shape))
